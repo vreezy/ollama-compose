@@ -1,0 +1,2 @@
+# This folder holds the downloaded Ollama models (blobs/ + manifests/).
+# Its contents are excluded via .gitignore - only the folder itself is tracked.

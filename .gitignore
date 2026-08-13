@@ -1,0 +1,9 @@
+# Downloaded models (many GB) must never end up in the repo
+models/*
+!models/.gitkeep
+
+# Local overrides
+.env
+compose.override.yml
+
+.claude

@@ -1,0 +1,50 @@
+services:
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+
+    ports:
+      # Listen on all interfaces -> reachable from the whole LAN.
+      # Want it local only? Use "127.0.0.1:11434:11434" instead.
+      - "11434:11434"
+
+    environment:
+      # Bind Ollama to all interfaces inside the container
+      # (without this it only listens on 127.0.0.1 and the port mapping goes nowhere)
+      OLLAMA_HOST: "0.0.0.0:11434"
+      # Models are stored in the bind-mounted host folder ./models
+      OLLAMA_MODELS: "/models"
+      # How long a model stays in memory after the last request
+      OLLAMA_KEEP_ALIVE: "5m"
+      # How many requests are processed in parallel per model
+      OLLAMA_NUM_PARALLEL: "1"
+      # Allow access from browsers / other hosts (CORS)
+      OLLAMA_ORIGINS: "*"
+
+    volumes:
+      # Models persist inside the project folder: ./models
+      # :Z applies the SELinux label for this container (required on Fedora!)
+      - ./models:/models:Z
+      # Ollama's SSH key and config (not the models) in a named volume
+      - ollama-config:/root/.ollama
+
+    networks:
+      ollama-net:
+        aliases:
+          - ollama
+
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  ollama-config:
+
+networks:
+  ollama-net:
+    # Fixed name so other compose projects can join it as an external network
+    name: ollama-net

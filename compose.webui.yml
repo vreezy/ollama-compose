@@ -1,0 +1,52 @@
+# Overlay adding Open WebUI, a browser front-end for Ollama.
+#
+# Usage (stacks with the other overlays):
+#   podman compose -f compose.yml -f compose.webui.yml up -d
+#   podman compose -f compose.yml -f compose.rocm.yml -f compose.webui.yml up -d
+#
+# Then open http://localhost:3000 and create the first account - it becomes the admin.
+#
+# Note: the image is roughly 4 GB because it ships Python plus the ML dependencies
+# used for the document/RAG features.
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+    ports:
+      # Open WebUI listens on 8080 inside the container.
+      # Local only? Use "127.0.0.1:3000:8080" instead.
+      - "3000:8080"
+
+    environment:
+      # Reaches Ollama by its network alias on ollama-net - no IP, no port mapping.
+      OLLAMA_BASE_URL: "http://ollama:11434"
+      # Set to "false" to require a login (recommended if the port is exposed to the LAN).
+      WEBUI_AUTH: "true"
+      # Silences the first-run telemetry prompt and keeps the container offline.
+      ANONYMIZED_TELEMETRY: "false"
+      DO_NOT_TRACK: "true"
+      SCARF_NO_ANALYTICS: "true"
+
+    volumes:
+      # Chats, accounts and settings (SQLite). A named volume, not a bind mount -
+      # Podman labels it for SELinux automatically, so no :Z needed here.
+      - open-webui-data:/app/backend/data
+
+    networks:
+      - ollama-net
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  open-webui-data:

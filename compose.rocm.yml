@@ -1,0 +1,38 @@
+# Overlay for AMD GPU acceleration (ROCm).
+#
+# Usage:
+#   podman compose -f compose.yml -f compose.rocm.yml up -d
+# or create an .env file containing: COMPOSE_FILE=compose.yml:compose.rocm.yml
+#
+# NOTE: This overlay requires the "docker-compose" package as the compose provider.
+# podman-compose (1.6.0) silently ignores the "ipc:" key -> Ollama starts and the API
+# responds, but every inference request dies. See the README for details.
+services:
+  ollama:
+    image: docker.io/ollama/ollama:rocm
+
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+
+    # REQUIRED: without ipc=host the ROCm runner aborts while loading the model with
+    # "Memory critical error by agent node-0 ... Reason: Memory in use"
+    # and "llama-server process has terminated: signal: aborted (core dumped)".
+    # ROCm/KFD needs the host IPC namespace. Tested and NOT sufficient as a substitute:
+    # shm_size, a /dev/shm bind mount, privileged, userns_mode or pid: host.
+    ipc: host
+
+    security_opt:
+      - seccomp=unconfined
+
+    environment:
+      OLLAMA_HOST: "0.0.0.0:11434"
+      OLLAMA_MODELS: "/models"
+      OLLAMA_KEEP_ALIVE: "5m"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_ORIGINS: "*"
+      # If ROCm does not detect your GPU, force the matching gfx version here.
+      # Strix Halo (Radeon 8050S/8060S, gfx1151) -> 11.5.1
+      # RDNA3 discrete GPU (gfx1100/1101/1102)   -> 11.0.0
+      # Not needed on Strix Halo - gfx1151 is detected natively.
+      # HSA_OVERRIDE_GFX_VERSION: "11.5.1"
