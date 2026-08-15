@@ -1,23 +1,33 @@
-# Ollama with Podman Compose on Fedora
+# podman-ai-stack
 
-Run [Ollama](https://ollama.com) — a local LLM server — as a rootless container on Fedora, with
-your models stored in the project folder instead of an anonymous volume.
+A local AI stack on Fedora, running rootless under Podman: a **chat LLM server**, a **browser UI**
+for it, and **image generation** — each an optional piece you switch on with a compose overlay.
 
-Everything is driven by `podman compose`. There is no daemon, nothing runs as root, and the whole
-setup is three small YAML files you can read in a minute.
+Everything is driven by `podman compose`. There is no daemon, nothing runs as root, and models and
+data stay in folders you can see and back up rather than in anonymous volumes.
 
-**What you get**
+**What is in it**
 
-- **Models in a folder you control.** They land in [`models/`](models/) right next to the compose
-  file, so you can see them, back them up, move them to another machine, or delete them with `rm`.
-  They survive `podman compose down`.
-- **Reachable from your network.** The API listens on all interfaces, so other machines and other
-  containers can use it. Not just `localhost`.
-- **Optional AMD GPU acceleration** via ROCm, as a compose overlay you switch on when you want it.
-- **Optional web UI** ([Open WebUI](https://github.com/open-webui/open-webui)), also as an overlay.
+- **[Ollama](https://ollama.com)** — runs chat models locally and serves them over an HTTP API,
+  including an OpenAI-compatible endpoint.
+- **[Open WebUI](https://github.com/open-webui/open-webui)** — a browser front-end for Ollama with
+  chat history, model management and document upload.
+- **[ComfyUI](https://github.com/comfyanonymous/ComfyUI)** — node-based image generation
+  (Stable Diffusion and friends).
+- **AMD GPU acceleration** via ROCm, for both Ollama and ComfyUI.
 
-Inspired by [Running Ollama locally with Podman on Fedora Linux](https://fedoramagazine.org/running-ollama-locally-with-podman-on-fedora-linux/)
-from Fedora Magazine, extended with persistent model storage, network access, GPU support and a UI.
+**Design choices**
+
+- **Your data in your folders.** Ollama models land in [`models/`](models/), the whole ComfyUI tree
+  in `comfyui/`. You can inspect them, back them up, copy them to another machine, or delete them
+  with `rm`. They survive `podman compose down`.
+- **Reachable from your network.** Services listen on all interfaces, so other machines and other
+  containers can use them — not just `localhost`.
+- **Nothing you did not ask for.** The base setup is Ollama on CPU. GPU support, the web UI and
+  image generation are separate files you add when you want them.
+
+The Ollama part started from [Running Ollama locally with Podman on Fedora Linux](https://fedoramagazine.org/running-ollama-locally-with-podman-on-fedora-linux/)
+(Fedora Magazine) and grew from there.
 
 ---
 
@@ -26,9 +36,11 @@ from Fedora Magazine, extended with persistent model storage, network access, GP
 | File | Purpose |
 |---|---|
 | [`compose.yml`](compose.yml) | The base setup: Ollama on CPU |
-| [`compose.rocm.yml`](compose.rocm.yml) | Overlay: AMD GPU acceleration (ROCm) |
+| [`compose.rocm.yml`](compose.rocm.yml) | Overlay: AMD GPU acceleration for Ollama |
 | [`compose.webui.yml`](compose.webui.yml) | Overlay: Open WebUI browser front-end |
-| [`models/`](models/) | Where models are stored (contents excluded from Git) |
+| [`compose.comfyui.yml`](compose.comfyui.yml) | Overlay: ComfyUI image generation (AMD GPU) |
+| [`models/`](models/) | Ollama models (contents excluded from Git) |
+| `comfyui/` | ComfyUI tree: checkpoints, custom nodes, outputs (created on first start, excluded from Git) |
 
 The overlays are independent and combine freely — see [Usage](#usage).
 
@@ -38,10 +50,12 @@ The overlays are independent and combine freely — see [Usage](#usage).
 
 - **Fedora** (tested on Fedora 44) or any distribution with Podman 5.x. Other distributions work,
   but the `dnf` commands and the SELinux notes below are Fedora-specific.
-- **Disk space.** Models are large: 2–5 GB each, and the ROCm image alone is about 10 GB.
-- **RAM.** A 3B model needs roughly 4 GB free, a 7B model roughly 8 GB.
-- **For GPU acceleration:** an AMD GPU supported by ROCm, or an NVIDIA card with the
-  [NVIDIA container toolkit](#nvidia).
+- **Disk space.** Everything here is large. The base Ollama image is ~1.5 GB, the ROCm variant
+  ~10 GB, Open WebUI ~4 GB and the ComfyUI image ~32 GB. Models add 2–5 GB each for LLMs and 4–7 GB
+  per image-generation checkpoint. Budget generously.
+- **RAM.** A 3B chat model needs roughly 4 GB free, a 7B model roughly 8 GB.
+- **For GPU acceleration:** an AMD GPU supported by ROCm. NVIDIA needs a different image and the
+  [container toolkit](#nvidia).
 
 ---
 
@@ -102,9 +116,12 @@ normal, not an error.
 ### 4. Get the files
 
 ```bash
-git clone <this-repo>
-cd ollama-compose
+git clone <this-repo> podman-ai-stack
+cd podman-ai-stack
 ```
+
+> The folder name becomes the compose project name, which prefixes the named volumes
+> (`podman-ai-stack_ollama-config` and so on). Pick a name you are happy to keep.
 
 ### 5. Optional: survive logout and reboot
 
@@ -124,23 +141,39 @@ systemctl --user enable --now podman-restart.service
 Pick the combination you want:
 
 ```bash
-# CPU only — the base setup
+# Ollama on CPU — the base setup
 podman compose up -d
 
-# With AMD GPU acceleration
+# Ollama with AMD GPU acceleration
 podman compose -f compose.yml -f compose.rocm.yml up -d
 
-# With the web UI
+# Ollama plus the web UI
 podman compose -f compose.yml -f compose.webui.yml up -d
 
-# Both
+# ComfyUI on its own — no Ollama involved
+podman compose -f compose.comfyui.yml up -d
+
+# Everything: Ollama on GPU, web UI and image generation
 podman compose -f compose.yml -f compose.rocm.yml -f compose.webui.yml up -d
 ```
+
+Chat and image generation are separate concerns, so
+[`compose.comfyui.yml`](compose.comfyui.yml) is self-contained — it does not need
+[`compose.yml`](compose.yml). Both files declare the same `ollama-net` network, which lets ComfyUI
+run alone, run alongside Ollama, and reach it at `http://ollama:11434` when both are up.
+
+Which ports that gives you:
+
+| Service | URL | Enabled by |
+|---|---|---|
+| Ollama API | <http://localhost:11434> | always |
+| Open WebUI | <http://localhost:3000> | `compose.webui.yml` |
+| ComfyUI | <http://localhost:8188> | `compose.comfyui.yml` |
 
 To avoid retyping the overlay list, put your preferred combination in an `.env` file:
 
 ```bash
-echo 'COMPOSE_FILE=compose.yml:compose.rocm.yml' > .env
+echo 'COMPOSE_FILE=compose.yml:compose.rocm.yml:compose.comfyui.yml' > .env
 ```
 
 From then on a plain `podman compose up -d` uses it.
@@ -234,6 +267,146 @@ holds it back until Ollama reports healthy, so it never starts against a dead ba
 
 ---
 
+## Image generation (ComfyUI)
+
+[`compose.comfyui.yml`](compose.comfyui.yml) runs [ComfyUI](https://github.com/comfyanonymous/ComfyUI),
+a node-based interface for Stable Diffusion and related image models.
+
+### Starting it
+
+ComfyUI is fully independent of Ollama, and normally you want just one of the two:
+
+```bash
+podman compose -f compose.comfyui.yml up -d
+```
+
+Open <http://localhost:8188>.
+
+If you do want both — for workflows that have an LLM write or refine prompts — start them together
+and ComfyUI can reach Ollama at `http://ollama:11434`:
+
+```bash
+podman compose -f compose.yml -f compose.rocm.yml -f compose.comfyui.yml up -d
+```
+
+> The image is about 32 GB, so the first pull takes a while. On first start it also unpacks a full
+> ComfyUI tree into `comfyui/`, which takes another moment — until that finishes the port does not
+> answer yet.
+
+Check that it came up and is on the GPU:
+
+```bash
+curl -s http://localhost:8188/system_stats | jq '{version: .system.comfyui_version, device: .devices[0].name}'
+```
+
+```json
+{
+  "version": "0.15.0",
+  "device": "cuda:0 AMD Radeon Graphics : native"
+}
+```
+
+If `device` says `cpu`, the GPU was not picked up — see [Troubleshooting](#troubleshooting).
+ROCm reports itself through PyTorch's CUDA API, so `cuda:0` is the correct and expected wording on
+an AMD card.
+
+### Adding models
+
+ComfyUI ships **without** any models. Everything lives under `comfyui/models/`, which is a plain
+folder on your host:
+
+```
+comfyui/models/
+├── checkpoints/    # the main image models (SD 1.5, SDXL, Flux, ...)
+├── loras/          # LoRA fine-tunes
+├── vae/            # separate VAE files
+├── controlnet/     # ControlNet models
+├── upscale_models/ # ESRGAN and friends
+└── ...
+```
+
+To install a model, drop the file into the matching folder — no container commands involved:
+
+```bash
+# example: Stable Diffusion 1.5 (~4 GB)
+curl -L -o comfyui/models/checkpoints/v1-5-pruned-emaonly.safetensors \
+  https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors
+```
+
+Then reload the ComfyUI page in your browser, or press **R**, and the checkpoint appears in the
+loader node. A restart of the container is not needed.
+
+[Civitai](https://civitai.com) and [Hugging Face](https://huggingface.co/models?pipeline_tag=text-to-image)
+are the usual sources. Prefer `.safetensors` over `.ckpt`.
+
+### Where your work is kept
+
+Everything lives in `comfyui/` next to the compose files:
+
+| Folder | Contents |
+|---|---|
+| `comfyui/models/` | the models you downloaded |
+| `comfyui/output/` | generated images |
+| `comfyui/input/` | images you upload for img2img, inpainting, ... |
+| `comfyui/user/` | your workflows and UI settings |
+| `comfyui/custom_nodes/` | installed extensions |
+
+Because it is an ordinary folder, backing up means copying it, and installing a custom node means
+cloning it into `comfyui/custom_nodes/` and restarting the container.
+
+The folder is excluded from Git — it holds a full ComfyUI checkout plus many gigabytes of models.
+
+### Updating
+
+The container uses whatever ComfyUI version is in `comfyui/`, not the one baked into the image, so
+you can update in place:
+
+```bash
+podman compose down
+git -C comfyui pull
+podman compose -f compose.yml -f compose.comfyui.yml up -d
+```
+
+To go back to the version shipped with the image, move the folder aside and let it repopulate:
+
+```bash
+podman compose down
+mv comfyui comfyui.old
+podman compose -f compose.yml -f compose.comfyui.yml up -d
+```
+
+### Removing it
+
+If ComfyUI is all you were running:
+
+```bash
+podman compose -f compose.comfyui.yml down
+```
+
+If it was part of a larger stack, stop everything and start again without the overlay:
+
+```bash
+podman compose down
+podman compose -f compose.yml -f compose.rocm.yml up -d   # continue without ComfyUI
+```
+
+To reclaim the space as well:
+
+```bash
+podman rmi docker.io/ignatberesnev/comfyui-gfx1151:v0.2   # ~32 GB
+rm -rf comfyui/                                            # models, outputs and workflows
+```
+
+### A note on the image
+
+The image is a community build targeting **gfx1151** (AMD Strix Halo / Ryzen AI MAX+ 395),
+assembled on top of AMD's ROCm 7.2 PyTorch base:
+[IgnatBeresnev/comfyui-gfx1151](https://github.com/IgnatBeresnev/comfyui-gfx1151). It is not an
+official AMD or ComfyUI release. On other AMD architectures it may or may not work — verify with
+the `system_stats` check above before assuming it does.
+
+---
+
 ## Network access
 
 ### From other machines
@@ -242,8 +415,9 @@ The API listens on all interfaces (`OLLAMA_HOST=0.0.0.0:11434` in [`compose.yml`
 you only need to open the firewall:
 
 ```bash
-sudo firewall-cmd --add-port=11434/tcp --permanent
-sudo firewall-cmd --add-port=3000/tcp --permanent   # only if you use the web UI
+sudo firewall-cmd --add-port=11434/tcp --permanent   # Ollama API
+sudo firewall-cmd --add-port=3000/tcp --permanent    # Open WebUI
+sudo firewall-cmd --add-port=8188/tcp --permanent    # ComfyUI
 sudo firewall-cmd --reload
 ```
 
@@ -253,16 +427,25 @@ Find your address with `ip -4 addr show scope global | grep inet`, then from ano
 curl http://<HOST-IP>:11434/api/version
 ```
 
-> **Ollama has no authentication.** Anyone who can reach port 11434 can use your models, delete
-> them, and saturate your hardware. Only expose it on a network you trust, and never forward the
-> port from the internet. If you need remote access, put a reverse proxy with authentication in
-> front of it. Open WebUI on port 3000 *does* have real user accounts.
+> **Ollama and ComfyUI have no authentication.** Anyone who can reach port 11434 or 8188 can use
+> your models, delete them, change your workflows and saturate your hardware. Only expose them on a
+> network you trust, and never forward those ports from the internet. If you need remote access, put
+> a reverse proxy with authentication in front. Open WebUI on port 3000 *does* have real user
+> accounts.
 
-To keep it local only, change the mapping in [`compose.yml`](compose.yml):
+To keep a service local only, change its mapping to bind to the loopback address — for example in
+[`compose.yml`](compose.yml):
 
 ```yaml
     ports:
       - "127.0.0.1:11434:11434"
+```
+
+If you still want to reach it from your own laptop, an SSH tunnel gives you access without opening
+anything to the network:
+
+```bash
+ssh -L 8188:localhost:8188 user@host    # then open http://localhost:8188 locally
 ```
 
 ### From other containers
@@ -592,6 +775,38 @@ sudo systemctl disable --now ollama
 Check in order: locally with `curl http://localhost:11434/`, then the firewall with
 `sudo firewall-cmd --list-ports`, then `OLLAMA_HOST` in [`compose.yml`](compose.yml).
 
+**ComfyUI does not answer on port 8188**
+
+On the very first start it unpacks a full ComfyUI tree into `comfyui/`, and the port stays closed
+until that is done. Watch it happen:
+
+```bash
+podman compose logs -f comfyui
+```
+
+**ComfyUI runs on the CPU, or crashes when generating**
+
+Confirm what PyTorch actually sees:
+
+```bash
+podman exec comfyui python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_properties(0).gcnArchName)"
+```
+
+You want `True` and your GPU architecture. Note that detection alone is not proof — some ROCm
+builds report a GPU correctly and then segfault on the first allocation. Test a real one:
+
+```bash
+podman exec comfyui python3 -c "import torch; print(float(torch.randn(64,64,device='cuda').sum()))"
+```
+
+If that segfaults, the image does not support your GPU architecture, and no environment variable
+will fix it. Use an image built for your card.
+
+**ComfyUI does not list a model you downloaded**
+
+Reload the browser page (or press **R**). If it still does not show up, check that the file landed
+in the right subfolder of `comfyui/models/` and is a `.safetensors` or `.ckpt` file.
+
 **Open WebUI shows no models**
 
 Check whether it can reach the backend:
@@ -609,7 +824,8 @@ There is no reset from outside. Wipe its data and start over — this deletes al
 
 ```bash
 podman compose down
-podman volume rm ollama-compose_open-webui-data
+podman volume ls | grep open-webui-data     # find the exact name
+podman volume rm <prefix>_open-webui-data
 ```
 
 **`/api/embed` returns an empty array**
@@ -624,11 +840,18 @@ Chat models cannot produce embeddings. Use `nomic-embed-text` or `mxbai-embed-la
 podman compose down
 
 podman rmi docker.io/ollama/ollama:latest docker.io/ollama/ollama:rocm
-podman rmi ghcr.io/open-webui/open-webui:main      # if you used the web UI
+podman rmi ghcr.io/open-webui/open-webui:main             # if you used the web UI
+podman rmi docker.io/ignatberesnev/comfyui-gfx1151:v0.2   # if you used ComfyUI
 
-podman volume ls                                   # names are prefixed with the project name
-podman volume rm ollama-compose_ollama-config
-podman volume rm ollama-compose_open-webui-data    # deletes all chats and accounts
+rm -rf models/     # all Ollama models
+rm -rf comfyui/    # ComfyUI checkout, checkpoints, workflows and generated images
+```
 
-rm -rf models/*                                    # deletes all downloaded models
+The named volumes are prefixed with the compose project name, which defaults to the name of the
+folder you cloned into. List them first, then remove the ones you recognise:
+
+```bash
+podman volume ls
+podman volume rm <prefix>_ollama-config
+podman volume rm <prefix>_open-webui-data    # deletes all chats and accounts
 ```

@@ -1,0 +1,65 @@
+# ComfyUI, a node-based UI for image generation (Stable Diffusion et al).
+#
+# Runs on its own - Ollama is not required:
+#   podman compose -f compose.comfyui.yml up -d
+#
+# Or together with the rest of the stack:
+#   podman compose -f compose.yml -f compose.rocm.yml -f compose.comfyui.yml up -d
+#
+# Then open http://localhost:8188
+#
+# Uses a community image built specifically for gfx1151 (AMD Strix Halo,
+# Ryzen AI MAX+ 395) on top of AMD's ROCm 7.2 PyTorch base:
+#   https://github.com/IgnatBeresnev/comfyui-gfx1151
+services:
+  comfyui:
+    image: docker.io/ignatberesnev/comfyui-gfx1151:v0.2
+    container_name: comfyui
+    restart: unless-stopped
+
+    ports:
+      # Local only? Use "127.0.0.1:8188:8188" instead.
+      - "8188:8188"
+
+    volumes:
+      # The whole ComfyUI tree lives on the host, so models, custom nodes, workflows
+      # and generated images are all visible in ./comfyui.
+      # If the folder is empty on first start, the image populates it.
+      # :Z applies the SELinux label (required on Fedora).
+      - ./comfyui:/opt/ComfyUI:Z
+
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+
+    # REQUIRED: without the host IPC namespace, ROCm aborts as soon as a model is
+    # loaded onto the GPU:
+    #   Memory critical error by agent node-0 ... Reason: Memory in use.
+    #   Aborted (core dumped)
+    # The upstream project uses shm_size: 8G instead, which is enough on Arch but
+    # NOT under rootless Podman here - it fails exactly as above. Note that Podman
+    # rejects shm_size and ipc: host together, so this replaces it rather than adding to it.
+    ipc: host
+
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+
+    environment:
+      # Enables the experimental AOTriton path used by flash-attention on ROCm.
+      TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "1"
+      # Only needed if ROCm fails to recognise the GPU. gfx1151 works without it.
+      # HSA_OVERRIDE_GFX_VERSION: "11.5.1"
+
+    # Joins the same network as Ollama, so workflows can call the LLM API at
+    # http://ollama:11434 without going through the host. Harmless when ComfyUI
+    # runs on its own - the network is simply created and stays empty otherwise.
+    networks:
+      - ollama-net
+
+networks:
+  # Declared identically in compose.yml, so this file works standalone as well as
+  # merged with the rest of the stack.
+  ollama-net:
+    name: ollama-net
