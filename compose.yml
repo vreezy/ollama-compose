@@ -21,6 +21,7 @@ services:
       OLLAMA_NUM_PARALLEL: "1"
       # Allow access from browsers / other hosts (CORS)
       OLLAMA_ORIGINS: "*"
+      OLLAMA_CONTEXT_LENGTH: "65536"
 
     volumes:
       # Models persist inside the project folder: ./models
