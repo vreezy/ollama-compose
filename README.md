@@ -640,6 +640,71 @@ If your GPU is not detected, uncomment `HSA_OVERRIDE_GFX_VERSION` in
 [`compose.rocm.yml`](compose.rocm.yml) and set the version matching your architecture — `11.5.1`
 for Strix Halo, `11.0.0` for RDNA3 desktop cards. Many ROCm generations need this; gfx1151 does not.
 
+### More GPU memory on the HP ZBook Ultra G1a
+
+Applies to the reference machine: HP ZBook Ultra G1a 14", Ryzen AI MAX+ PRO 395 / Radeon 8060S,
+64 GB RAM, BIOS X89 Ver. 01.06.02, Fedora 44. The goal is an even split of 32 GB for the GPU and
+32 GB for the system.
+
+The iGPU can use two kinds of memory:
+
+- **VRAM carve-out**: set in the BIOS. This RAM is reserved for the GPU permanently and is invisible
+  to Linux, even when no model is loaded. The factory setting is 16 GB.
+- **GTT**: ordinary system RAM that the GPU borrows on demand. By default it is capped at half of
+  the RAM that Linux sees. **On this iGPU, Ollama counts only the GTT limit** as its usable VRAM.
+
+With the factory setting, Linux sees 46 GB and the GTT limit is 23.4 GiB, so Ollama reports
+`total="23.4 GiB"` while most of the 16 GB carve-out sits unused. The fix is to shrink the
+carve-out and raise the GTT limit instead.
+
+**1. BIOS: shrink the carve-out.** Reboot straight into the firmware setup:
+
+```bash
+systemctl reboot --firmware-setup
+```
+
+You can also press **F10** repeatedly while the machine powers on (**Esc** opens the HP startup
+menu). Find the setting for dedicated graphics memory (labelled "Dedicated …"), set it to the
+minimum, and tick the option that lets the operating system manage the allocation. Save with
+**F10**.
+
+**2. Kernel: raise the GTT limit to 32 GiB.** The limit is given in 4 KiB pages:
+32 × 1024³ / 4096 = `8388608`.
+
+```bash
+sudo grubby --update-kernel=ALL --args="ttm.pages_limit=8388608 ttm.page_pool_size=8388608"
+sudo reboot
+```
+
+**3. Verify** after the reboot:
+
+```bash
+free -g                                               # total: 62
+cat /sys/class/drm/card1/device/mem_info_vram_total   # 536870912 (512 MB carve-out)
+cat /sys/class/drm/card1/device/mem_info_gtt_total    # 34359738368 (32 GiB)
+cat /sys/module/ttm/parameters/pages_limit            # 8388608
+podman compose logs ollama | grep "inference compute" # total="32.0 GiB"
+```
+
+| | Factory | After |
+|---|---|---|
+| VRAM carve-out | 16 GB | 512 MB |
+| RAM visible to Linux | 46 GB | 62 GB |
+| GTT limit / reported by Ollama | 23.4 GiB | 32.0 GiB |
+
+The GPU takes the 32 GiB only while a model is loaded. When it is idle, the memory is available to
+the system. To give the GPU more, use a larger page count. For example, `12582912` is 48 GiB.
+Ollama raises its automatic default context above 32768 only from 48 GiB upwards.
+
+To undo the kernel change:
+
+```bash
+sudo grubby --update-kernel=ALL --remove-args="ttm.pages_limit ttm.page_pool_size"
+```
+
+> Do not set the carve-out to 32 GB in the BIOS instead. That memory would be lost to the system at
+> all times, and Ollama would not count it anyway.
+
 ### NVIDIA
 
 Install the container toolkit and generate the CDI specification:
