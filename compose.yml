@@ -18,7 +18,7 @@ services:
       # How long a model stays in memory after the last request
       OLLAMA_KEEP_ALIVE: "5m"
       # How many requests are processed in parallel per model
-      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_NUM_PARALLEL: "2"
       # Allow access from browsers / other hosts (CORS)
       OLLAMA_ORIGINS: "*"
       OLLAMA_CONTEXT_LENGTH: "65536"

@@ -29,7 +29,7 @@ services:
       OLLAMA_HOST: "0.0.0.0:11434"
       OLLAMA_MODELS: "/models"
       OLLAMA_KEEP_ALIVE: "5m"
-      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_NUM_PARALLEL: "2"
       OLLAMA_ORIGINS: "*"
       # If ROCm does not detect your GPU, force the matching gfx version here.
       # Strix Halo (Radeon 8050S/8060S, gfx1151) -> 11.5.1
